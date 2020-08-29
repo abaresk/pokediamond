@@ -3,6 +3,8 @@
 
 #pragma thumb on
 
+int TestFunc(int foobar);
+
 void InitIGT(struct IGT * igt)
 {
     igt->hours = 0;
@@ -48,3 +50,15 @@ u8 GetIGTMinutes(struct IGT * igt)
 {
     return igt->minutes;
 }
+
+#ifdef NONMATCHING
+// damn son this is so hard cant quite get it...
+int TestFunc(int foobar)
+{
+    foobar += 4;
+    GetIGTHours(NULL);
+    return foobar;
+}
+#else
+GLOBAL_ASM("asm/non_matchings/test.s")
+#endif

@@ -69,6 +69,9 @@ LIBS_OBJS = $(LIBS_FILES:%.s=$(BUILD_DIR)/%.o)
 # Object files
 O_FILES := $(C_OBJS) $(CXX_OBJS) $(S_OBJS)
 
+GLOBAL_ASM_C_FILES != grep -rl 'GLOBAL_ASM(' $(C_FILES)
+GLOBAL_ASM_O_FILES = $(addprefix $(BUILD_DIR)/,$(GLOBAL_ASM_C_FILES:.c=.o))
+
 # Overlay modules
 OVERLAYS := $(shell grep -oE "Overlay \w+" $(LD_SPEC) | cut -d' ' -f2)
 
@@ -101,6 +104,9 @@ LD      = $(WINE) $(MWLDARM)
 AR      := $(CROSS)ar
 OBJDUMP := $(CROSS)objdump
 OBJCOPY := $(CROSS)objcopy
+
+ASM_PROCESSOR_DIR := ../tools/asm_processor
+ASM_PROCESSOR := $(ASM_PROCESSOR_DIR)/compile.sh
 
 # ./tools/mwccarm/2.0/base/mwasmarm.exe -proc arm5te asm/arm9_thumb.s -o arm9.o
 ASFLAGS = -proc arm5te -i ../include -i .. -D$(GAME_VERSION) -D$(GAME_LANGUAGE)
@@ -190,8 +196,12 @@ else
 $(BUILD_DIR)/%.o: dep :=
 endif
 
+# Cpp asm processor is not supported at this time.
+$(GLOBAL_ASM_O_FILES): BUILD_C := $(ASM_PROCESSOR) "$(CC) $(CFLAGS)" "$(AS) $(ASFLAGS)"
+BUILD_C ?= $(CC) -c $(CFLAGS)
+
 $(C_OBJS): $(BUILD_DIR)/%.o: %.c $$(dep)
-	$(CC) -c $(CFLAGS) -o $@ $<
+	$(BUILD_C) $@ $<
 
 $(CXX_OBJS): $(BUILD_DIR)/%.o: %.cpp $$(dep)
 	$(CXX) -c $(CXXFLAGS) -o $@ $<

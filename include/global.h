@@ -1,6 +1,9 @@
 #ifndef GUARD_GLOBAL_H
 #define GUARD_GLOBAL_H
 
+// Make the compiler not care about GLOBAL_ASM for the asm processor.
+#define GLOBAL_ASM(input)
+
 #include "config.h"
 
 #include "MWC_string.h"
