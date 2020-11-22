@@ -14,6 +14,8 @@ u32 Sav2_HOF_sizeof(void)
     return sizeof(struct HallOfFame);
 }
 
+// Imagine for the life of us, we couldn't match this function.
+// TODO: Mark the entire function as NONMATCHING
 void Sav2_HOF_init(struct HallOfFame * hof)
 {
     MI_CpuClear32(hof, sizeof(struct HallOfFame));
