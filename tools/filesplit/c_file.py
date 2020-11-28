@@ -43,7 +43,7 @@ def is_function(text: Text) -> bool:
         return False
 
     parens = 0
-    f = io.StringIO(reversed(text))
+    f = io.StringIO(text[::-1])
     while True:
         char = f.read(1)
         if char == ')':
@@ -55,7 +55,8 @@ def is_function(text: Text) -> bool:
     
     # Next token should be a word
     rest = f.read()
-    return re.compile("^[a-zA-Z_][a-zA-Z0-9_]*").match(rest)
+    # This is reversed, which reduces readability
+    return re.compile("^[a-zA-Z0-9_]*[a-zA-Z_]").match(rest)
 
 def remove_comments(text: Text) -> Text:
     # remove all occurrences streamed comments (/*COMMENT */) from string
@@ -256,7 +257,7 @@ class CFile():
     # NOTE: After a match, make sure to consume whitespace until next text
     def parse_file(self) -> List:
         file_sections = []
-        while True:
+        while peek(self.contents) != '':
             text = toText(self.contents)
             for section in self.sections:
                 if section.match(text):
@@ -268,10 +269,6 @@ class CFile():
                     break
             # Consume whitespace
             consume_anyof(self.contents, [' ', '\t', '\r', '\n'])
-            # Check eof
-            if peek(self.contents) == '':
-                break
-            
         return file_sections
 
     def process(self):
