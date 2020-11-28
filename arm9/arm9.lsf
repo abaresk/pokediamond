@@ -111,7 +111,8 @@ Static arm9
 	Object unk_02029FB0.o
 	Object unk_0202A1E0.o
 	Object unk_0202A8F4.o
-	Object unk_0202A924.o
+	Object unk_0202A924_src.o
+	Object unk_0202A924_asm.o
 	Object unk_0202ABBC.o
 	Object unk_0202AC20.o
 	Object hall_of_fame.o
