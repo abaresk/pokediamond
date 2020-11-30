@@ -3,58 +3,6 @@
 
 	.text
 
-	thumb_func_start FUN_0202A92C
-FUN_0202A92C: ; 0x0202A92C
-	push {r4, lr}
-	mov r2, #0x45
-	add r4, r0, #0x0
-	mov r1, #0x0
-	lsl r2, r2, #0x2
-	bl memset
-	bl MTRandom
-	str r0, [r4, #0x0]
-	bl MTRandom
-	str r0, [r4, #0x4]
-	mov r1, #0x0
-	add r3, r4, #0x0
-	ldr r0, _0202A980 ; =0x0000FFFF
-	str r1, [r4, #0x8]
-	strh r0, [r4, #0xc]
-	strh r0, [r4, #0xe]
-	mov r0, #0x15
-	add r3, #0x10
-	strb r0, [r4, #0x10]
-	add r2, r1, #0x0
-_0202A95A:
-	str r2, [r3, #0x4]
-	strb r2, [r3, #0x8]
-	strb r2, [r3, #0x9]
-	strb r2, [r3, #0xa]
-	strb r2, [r3, #0xb]
-	add r1, r1, #0x1
-	add r3, #0x8
-	cmp r1, #0x15
-	blt _0202A95A
-	ldr r0, _0202A984 ; =0x0000010F
-	strb r2, [r4, r0]
-	add r1, r0, #0x1
-	strb r2, [r4, r1]
-	add r1, r0, #0x2
-	strb r2, [r4, r1]
-	add r0, r0, #0x3
-	strb r2, [r4, r0]
-	pop {r4, pc}
-	nop
-_0202A980: .word 0x0000FFFF
-_0202A984: .word 0x0000010F
-
-	thumb_func_start FUN_0202A988
-FUN_0202A988: ; 0x0202A988
-	str r1, [r0, #0x0]
-	str r1, [r0, #0x4]
-	bx lr
-	.balign 4
-
 	thumb_func_start FUN_0202A990
 FUN_0202A990: ; 0x0202A990
 	push {r3, lr}
