@@ -1265,6 +1265,8 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
                 if sectype == '.text':
                     n_text += 1
 
+        for sym in relocated_symbols:
+            print("Relocated sym:", sym.name)
         # Move over symbols, deleting the temporary function labels.
         # Sometimes this naive procedure results in duplicate symbols, or UNDEF
         # symbols that are also defined the same .o file. Hopefully that's fine.
@@ -1305,10 +1307,16 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
         objfile.symtab.sh_info = len(new_local_syms)
 
         # Move over relocations
+        print("Moving relocations:")
         n_text = 0
-        for sectype in SECTIONS:
-            source = asm_objfile.find_section(sectype, n_text if sectype == '.text' else 0)
+        for sec in objfile.sections:
+            sectype = sec.name
+            # This should work as long as you NONMATCH whole functions rather than asm fragments
             target = objfile.find_section(sectype, n_text if sectype == '.text' else 0)
+
+            print('\nSectype:', sectype)
+            if target is not None:
+                print('Target sec:', target.index)
 
             if target is not None:
                 # fixup relocation symbol indices, since we butchered them above
@@ -1325,11 +1333,21 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
                         nrels.append(rel)
                     reltab.relocations = nrels
                     reltab.data = b''.join(rel.to_bin() for rel in nrels)
-
-            if not source:
-                if sectype == '.text': # maybe unnecessary?
+            
+            if not to_copy[sectype + (str(n_text) if sectype == '.text' else '')]:
+                if sectype == '.text':
                     n_text += 1
                 continue
+
+            func = to_copy[sectype + str(n_text) if sectype == '.text' else ''][0][2]
+            asm_n_text = asm_objfile.text_section_index(func + '_asm_start')
+            source = asm_objfile.find_section(sectype, asm_n_text if sectype == '.text' else 0)
+            if not source:
+                if sectype == '.text':
+                    n_text += 1
+                continue
+
+            print('Source sec:', source.index)
 
             target_reltab = objfile.find_section('.rel' + sectype, n_text if sectype == '.text' else 0)
             target_reltaba = objfile.find_section('.rela' + sectype, n_text if sectype == '.text' else 0)
@@ -1340,18 +1358,17 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
                         rel.r_offset = moved_late_rodata[rel.r_offset]
                 new_data = b''.join(rel.to_bin() for rel in reltab.relocations)
                 if reltab.sh_type == SHT_REL:
-                    if not target_reltab:
-                        target_reltab = objfile.add_section('.rel' + sectype,
-                                sh_type=SHT_REL, sh_flags=0,
-                                sh_link=objfile.symtab.index, sh_info=target.index,
-                                sh_addralign=4, sh_entsize=8, data=b'')
+                    target_reltab = objfile.add_section('.rel' + sectype,
+                            sh_type=SHT_REL, sh_flags=0,
+                            sh_link=objfile.symtab.index, sh_info=target.index,
+                            sh_addralign=4, sh_entsize=8, data=b'')
                     target_reltab.data += new_data
                 else:
-                    if not target_reltaba:
-                        target_reltaba = objfile.add_section('.rela' + sectype,
-                                sh_type=SHT_RELA, sh_flags=0,
-                                sh_link=objfile.symtab.index, sh_info=target.index,
-                                sh_addralign=4, sh_entsize=12, data=b'')
+                    # Always append as a separate .rela.text section
+                    target_reltaba = objfile.add_section('.rela' + sectype,
+                            sh_type=SHT_RELA, sh_flags=0,
+                            sh_link=objfile.symtab.index, sh_info=target.index,
+                            sh_addralign=4, sh_entsize=12, data=b'')
                     target_reltaba.data += new_data
             if sectype == '.text':
                 n_text += 1
