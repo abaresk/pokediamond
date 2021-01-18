@@ -55,6 +55,7 @@ u8 GetIGTMinutes(struct IGT * igt)
 // damn son this is so hard cant quite get it...
 int TestFunc(int foobar)
 {
+    GF_ASSERT(foobar > 0);
     foobar += 4;
     GetIGTHours(NULL);
     return foobar;
