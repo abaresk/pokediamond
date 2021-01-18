@@ -6,7 +6,7 @@ import copy
 import sys
 import re
 import os
-from collections import namedtuple
+from collections import namedtuple, defaultdict
 from io import StringIO
 
 MAX_FN_SIZE = 100
@@ -162,6 +162,13 @@ class Relocation:
         else:
             return struct.pack('<III', self.r_offset, self.r_info, self.r_addend)
 
+# Maybe make params idx, type
+def make_relocation(offset, info, addend):
+    rel = Relocation(0, SHT_RELA)
+    rel.r_offset = offset
+    rel.r_info =  info
+    rel.r_addend = addend
+    return rel
 
 class Section:
     """
@@ -209,8 +216,8 @@ class Section:
         return ret
 
     def is_rel(self):
-        return self.sh_type == SHT_REL or self.sh_type == SHT_RELA
 
+        return self.sh_type == SHT_REL or self.sh_type == SHT_RELA
     def header_to_bin(self):
         if self.sh_type != SHT_NOBITS:
             self.sh_size = len(self.data)
@@ -236,6 +243,13 @@ class Section:
         assert pos is not None
         assert pos[0] == section.index
         return pos[1]
+
+    def get_symbol(self, index):
+        assert self.sh_type == SHT_SYMTAB
+        for i, symbol in enumerate(self.symbol_entries):
+            if i == index:
+                return symbol
+        return None
 
     def init_symbols(self, sections):
         assert self.sh_type == SHT_SYMTAB
@@ -294,10 +308,11 @@ class ElfFile:
     def find_section(self, name, num):
         i = 0 # Count how many sections of name `name` have been encountered so far, when i reaches `num` return that section
         for s in self.sections:
-            if s.name == name:
-                if i == num:
-                    return s
-                i += 1
+            if s.name == name and i == num:
+                return s
+            # Increment if section is a .text section
+            if s.name == ".text":
+                i += 1 
         return None
 
     # Because Metrowerks for DS can make duplicate .text sections
@@ -306,6 +321,31 @@ class ElfFile:
         for s in self.sections:
             if s.name == name and s.sh_name == st_name:
                 return s
+        return None
+
+    # Return i, where i is the ith text section corresponding to the function 
+    # called `name`.
+    def text_section_index(self, name):
+        st_shndx, _ = self.symtab.find_symbol(name)
+        n_text = 0
+        for sec in self.sections:
+            if sec.index == st_shndx:
+                return n_text
+            if sec.name =='.text':
+                n_text += 1      
+        return -1
+
+    def find_text_section_with_name(self, name):
+        st_shndx, _ = self.symtab.find_symbol(name)
+        for sec in self.sections:
+            if sec.index == st_shndx:
+                return sec
+        return None
+
+    def find_rela_section(self, section):
+        for sec in self.sections:
+            if sec.sh_type == SHT_RELA and sec.sh_info == section.index:
+                return sec
         return None
 
     def add_section(self, name, sh_type, sh_flags, sh_link, sh_info, sh_addralign, sh_entsize, data):
@@ -484,10 +524,12 @@ class GlobalAsmBlock:
 
 
     def align4(self):
+        print('align 4')
         while self.fn_section_sizes[self.cur_section] % 2 != 0:
             self.fn_section_sizes[self.cur_section] += 1
 
     def add_sized(self, size, line):
+        print('adding size:', size)
         if self.cur_section in ['.text', '.init', '.late_rodata']:
             if size % 2 != 0:
                 self.fail("size must be a multiple of 2 or 4", line)
@@ -513,6 +555,7 @@ class GlobalAsmBlock:
         line = re.sub(r'^[a-zA-Z0-9_]+:\s*', '', line)
         changed_section = False
         emitting_double = False
+        print("Processing line:", line)
         if line.startswith('glabel ') and self.cur_section in ['.text', '.init']:
             self.text_glabels.append(line.split()[1])
         if not line:
@@ -571,6 +614,9 @@ class GlobalAsmBlock:
             self.add_sized(self.count_quoted_size(line, z, real_line, output_enc), real_line)
         elif line.startswith('.byte'):
             self.add_sized(len(line.split(',')), real_line)
+        # Branches are 4 bytes long
+        elif line.startswith('bl'):
+            self.add_sized(4, real_line)
         elif line.startswith('.'):
             # .macro, ...
             self.fail("asm directive not supported", real_line)
@@ -597,11 +643,13 @@ class GlobalAsmBlock:
             self.asm_conts.append(real_line)
 
     def finish(self, state):
+        print("Composing func")
         src = [''] * (self.num_lines + 1)
         late_rodata_dummy_bytes = []
         jtbl_rodata_size = 0
         late_rodata_fn_output = []
 
+        print("Section sizes:", self.fn_section_sizes)
         num_instr = self.fn_section_sizes['.text'] // 2
 
         if self.fn_section_sizes['.late_rodata'] > 0:
@@ -662,6 +710,8 @@ class GlobalAsmBlock:
             fn_emitted = 0
             fn_skipped = 0
             rodata_stack = late_rodata_fn_output[::-1]
+            print("self.fn_ins_inds:")
+            print(self.fn_ins_inds)
             for (line, count) in self.fn_ins_inds:
                 for _ in range(count):
                     if (fn_emitted > MAX_FN_SIZE and instr_count - tot_emitted > state.min_instr_count and
@@ -780,6 +830,8 @@ class GlobalAsmBlock:
             src[self.num_lines] += sbss2_code
         """
 
+        print("src:")
+        print(src)
         fn = Function(
                 text_glabels=self.text_glabels,
                 asm_conts=self.asm_conts,
@@ -830,7 +882,6 @@ def parse_source(f, opt, framepointer, input_enc, output_enc, print_source=None)
         # errors have correct line numbers. These will be overridden with
         # reasonable content further down.
         output_lines.append('')
-
         if global_asm is not None:
             if line.startswith(')'):
                 src, fn = global_asm.finish(state)
@@ -852,6 +903,8 @@ def parse_source(f, opt, framepointer, input_enc, output_enc, print_source=None)
                     for line2 in f:
                         global_asm.process_line(line2.rstrip(), output_enc)
                 src, fn = global_asm.finish(state)
+                print("Finished global asm")
+                print("Fn:", fn)
                 output_lines[-1] = ''.join(src)
                 asm_functions.append(fn)
                 global_asm = None
@@ -892,7 +945,50 @@ def parse_source(f, opt, framepointer, input_enc, output_enc, print_source=None)
     out_file.close()
     return asm_functions
 
+# src_objfile: assembled .o file
+# dest_objfile: pre-padded .o file
+# funcs: functions to inject (list of str) 
+def inject_asm(src_objfile, dest_objfile, funcs):
+    print("Injecting funcs:", funcs)
+    for func in funcs:
+        # Find section in src and dest
+        src_text = src_objfile.find_text_section_with_name(func + "_asm_start")
+        dest_text = dest_objfile.find_text_section_with_name(func)
+
+        # Perform the transformations for dest_text. Can you just use src_text?
+        dest_text.sh_size = src_text.sh_size
+        dest_text.data = src_text.data
+        # print("Src text:", vars(src_text))
+        # print()
+        # print("Dest text:", vars(dest_text))
+
+        # If src_section has a corresponding .rela.text section, the symbols
+        # need to be updated to correspond with src_objfile's symtab.
+        src_rela = src_objfile.find_rela_section(src_text)
+        print("Src rela:", src_rela.index)
+        if src_rela is not None:
+            # You need to create a corresponding dest_rela section
+            update_rela_syms(src_objfile, dest_objfile, src_rela)
+        
+    pass
+
+# Update rela section to use the symtab indices from dest_objfile
+def update_rela_syms(src_objfile, dest_objfile, rela_section):
+    for rela in rela_section.relocations:
+        print("Rela:", vars(rela))
+        sym = src_objfile.symtab.get_symbol(rela.sym_index)
+        print("sym:", sym.name)
+        if sym is None:
+            print("could not find symbol at index", rela.sym_index)
+            return
+        new_sym_idx, _ = dest_objfile.symtab.find_symbol(sym.name)
+        rela.sym_index = new_sym_idx
+        
+        # mwasmarm branches require r_addend to be 0
+        rela.r_addend = 0
+
 def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
+    print("turtwig")
     SECTIONS = ['.data']
     SECTIONS.extend(['.text' for i in range(0,len(functions))])
     SECTIONS.extend(['.rodata', '.bss', '.sdata', '.sdata2', '.sbss'])
@@ -900,30 +996,28 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
     with open(objfile_name, 'rb') as f:
         objfile = ElfFile(f.read())
 
-    prev_locs = { # the sections aren't actually .text0 .text1 etc. but they require unique names
-        '.text0': 0,
-        '.data': 0,
-        '.rodata': 0,
-        '.bss': 0,
-        '.sdata': 0,
-        '.sdata2': 0,
-        '.sbss': 0,
-        #'.sbss2': 0,
-    }
+    prev_locs = defaultdict(int) # the sections aren't actually .text0 .text1 etc. but they require unique names
+    prev_locs['.text0'] = 0
+    prev_locs['.data'] = 0
+    prev_locs['.rodata'] = 0
+    prev_locs['.bss'] = 0
+    prev_locs['.sdata'] = 0
+    prev_locs['.sdata2'] = 0
+    prev_locs['.sbss'] = 0
+    
+    # Add '.text{n}' key for each function we want to inject
     for n in range(0,len(functions)):
         prev_locs.update({f'.text{n}': 0})
 
-    to_copy = { # the sections aren't actually .text0 .text1 etc. but they require unique names
-        '.text0': [],
-        '.data': [],
-        '.rodata': [],
-        '.bss': [],
-        '.sdata': [],
-        '.sdata2': [],
-        '.sbss': [],
-        #'.sbss2': [],
-    }
-    for n in range(0,len(functions)):
+    to_copy = defaultdict(list) # the sections aren't actually .text0 .text1 etc. but they require unique names
+    to_copy['.text0'] = []
+    to_copy['.data'] = []
+    to_copy['.rodata'] = []
+    to_copy['.bss'] = []
+    to_copy['.sdata'] = []
+    to_copy['.sdata2'] = []
+    to_copy['.sbss'] = []
+    for n in range(0,objfile.elf_header.e_shnum):
         to_copy.update({f'.text{n}': []})
 
     asm = []
@@ -939,14 +1033,15 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
     all_text_glabels = set()
     for function in functions:
         ifdefed = False
-        n_text = 0
         for sectype, (temp_name, size) in function.data.items():
             if temp_name is None:
-                if sectype == '.text':
-                    n_text += 1
                 continue
             assert size > 0
+            print("Temp name:", temp_name)
+            n_text = objfile.text_section_index(temp_name)
+            print('which text section:', n_text)
             loc = objfile.symtab.find_symbol(temp_name)
+            print("Loc:", loc)
             if loc is None:
                 ifdefed = True
                 break
@@ -963,8 +1058,6 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
                     asm.append('.space {}'.format(loc - prev_loc))
             to_copy[sectype + (str(n_text) if sectype == '.text' else '')].append((loc, size, temp_name, function.fn_desc))
             prev_locs[sectype + (str(n_text) if sectype == '.text' else '')] = loc + size
-            if sectype == '.text':
-                n_text += 1
         if not ifdefed:
             all_text_glabels.update(function.text_glabels)
             all_late_rodata_dummy_bytes.append(function.late_rodata_dummy_bytes)
@@ -996,6 +1089,25 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
 
     s_file = open("asm_processor_temp.s", 'wb') # Ditto.
     s_name = "asm_processor_temp.s"
+    # # Why is this 0x18 (should be 0x16)? Seems like mwasmarm 4-aligns .text sections.
+    # asm = [
+    #     '.section .text', 
+    #     'glabel _asmpp_func1_asm_start', 
+    #     '.section .text', '.section .text', 
+    #     '', 
+    #     'glabel TestFunc', 
+    #     '    push {r4, lr}', 
+    #     '    add r4, r0, #0', 
+    #     '    cmp r4, #0', 
+    #     '    bgt .L1', 
+    #     '    bl ErrorHandling', 
+    #     '.L1:', 
+    #     '    mov r0, #0', 
+    #     '    bl GetIGTHours', 
+    #     '    add r0, r4, #4', 
+    #     '    pop {r4, pc}', 
+    #     'glabel _asmpp_func1_asm_end']
+    print("Asm:", asm)
     try:
         s_file.write(asm_prelude + b'\n')
         for line in asm:
@@ -1006,6 +1118,8 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
             raise Failure("failed to assemble")
         with open(o_name, 'rb') as f:
             asm_objfile = ElfFile(f.read())
+
+        print("Assembly objfile:", asm_objfile.sections)
 
         # Remove some clutter from objdump output
         objfile.drop_irrelevant_sections()
@@ -1020,17 +1134,44 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
         target_reginfo.data = bytes(data)
         """
 
+        # # I have half a mind to start from scratch here and get rid of 
+        # # everything below. We are injecting isolated functions. The logic 
+        # # below is way more complicated than what we need because it handles 
+        # # arbitrary asm fragments.
+        # funcs = []
+        # for sec, sec_info in to_copy.items():
+        #     if sec.startswith('.text'):
+        #         funcs.append(sec_info[0][2])
+        # inject_asm(asm_objfile, objfile, funcs)
+        # return
+
+        ### DELETE EVERYTHING BELOW!
+
         # Move over section contents
         modified_text_positions = set()
         jtbl_rodata_positions = set()
         last_rodata_pos = 0
         n_text = 0
-        for sectype in SECTIONS:
+        print("to_copy:")
+        print(to_copy)
+        for sec in objfile.sections:
+            sectype = sec.name
+            print('sectype:', sectype)
             if not to_copy[sectype + (str(n_text) if sectype == '.text' else '')]:
                 if sectype == '.text':
                     n_text += 1
                 continue
-            source = asm_objfile.find_section(sectype, n_text if sectype == '.text' else 0)
+            # This should work as long as you NONMATCH whole functions rather than asm fragments
+            func = to_copy[sectype + str(n_text) if sectype == '.text' else ''][0][2]
+            asm_n_text = asm_objfile.text_section_index(func + '_asm_start')
+            print('func:', func)
+            print('asm_n_text:', asm_n_text)
+            print('n_text:', n_text)
+            source = asm_objfile.find_section(sectype, asm_n_text if sectype == '.text' else 0)
+            print('Asm section:')
+            print('index:', source.index)
+            print('offset: 0x%x' % source.sh_offset)
+            print('size: 0x%x' % source.sh_size)
             assert source is not None, "didn't find source section: " + sectype
             for (pos, count, temp_name, fn_desc) in to_copy[sectype + (str(n_text) if sectype == '.text' else '')]:
                 loc1 = asm_objfile.symtab.find_symbol_in_section(temp_name + '_asm_start', source)
@@ -1041,9 +1182,17 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
             if sectype == '.bss' or sectype == '.sbss2':
                 continue
             target = objfile.find_section(sectype, n_text if sectype == '.text' else 0)
+            print('Zeroed section:')
+            print('index:', target.index)
+            print('offset: 0x%x' % target.sh_offset)
+            print('size: 0x%x' % target.sh_size)
+
+            print('Asm data:', len(list(source.data)))
+            print('Zeroed data:', len(list(target.data)))
             assert target is not None, "missing target section of type " + sectype
             data = list(target.data)
             for (pos, count, _, _) in to_copy[sectype + (str(n_text) if sectype == '.text' else '')]:
+                # mwasmarm 4-aligns text sections, so make sure to copy exactly `count` bytes
                 data[pos:pos + count] = source.data[pos:pos + count]
                 if sectype == '.text':
                     assert count % 2 == 0
@@ -1244,8 +1393,11 @@ def run_wrapped(argv, outfile):
     else:
         if args.assembler is None:
             raise Failure("must pass assembler command")
+        print("piplup")
         with open(args.filename, encoding=args.input_enc) as f:
             functions = parse_source(f, opt=opt, framepointer=args.framepointer, input_enc=args.input_enc, output_enc=args.output_enc)
+            print("Functions:")
+            print(functions)
         if not functions:
             return
         asm_prelude = b''
@@ -1253,6 +1405,7 @@ def run_wrapped(argv, outfile):
             with open(args.asm_prelude, 'rb') as f:
                 asm_prelude = f.read()
         fixup_objfile(args.objfile, functions, asm_prelude, args.assembler, args.output_enc)
+        print("prinplup")
 
 def run(argv, outfile=sys.stdout.buffer):
     try:
