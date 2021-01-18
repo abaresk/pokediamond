@@ -1354,6 +1354,9 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
             for reltab in source.relocated_by:
                 for rel in reltab.relocations:
                     rel.sym_index = asm_objfile.symtab.symbol_entries[rel.sym_index].new_index
+                    # I suspect that this is requried for matching. If the after linking the
+                    # binary doesn't match, retry after commenting out the following line:
+                    rel.r_addend = 0
                     if sectype == '.rodata' and rel.r_offset in moved_late_rodata:
                         rel.r_offset = moved_late_rodata[rel.r_offset]
                 new_data = b''.join(rel.to_bin() for rel in reltab.relocations)
