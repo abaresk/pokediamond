@@ -1096,17 +1096,11 @@ def fixup_objfile(objfile_name, functions, asm_prelude, assembler, output_enc):
 
         # Find relocated symbols
         relocated_symbols = set()
-        n_text = 0
-        for sectype in SECTIONS:
-            for obj in [asm_objfile, objfile]:
-                sec = obj.find_section(sectype, n_text if sectype == '.text' else 0)
-                if sec is None:
-                    continue
+        for obj in [asm_objfile, objfile]:
+            for sec in obj.sections:
                 for reltab in sec.relocated_by:
                     for rel in reltab.relocations:
                         relocated_symbols.add(obj.symtab.symbol_entries[rel.sym_index])
-                if sectype == '.text':
-                    n_text += 1
 
         # Move over symbols, deleting the temporary function labels.
         # Sometimes this naive procedure results in duplicate symbols, or UNDEF
